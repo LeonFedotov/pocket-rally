@@ -1,0 +1,10 @@
+.DS_Store
+.pio/
+.vscode/
+node_modules/
+web/preview.inline.html
+game-test
+link-test
+export-art
+render-screens
+*.ppm
