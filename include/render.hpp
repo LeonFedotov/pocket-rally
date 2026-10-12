@@ -4,12 +4,17 @@
 
 namespace rally {
 constexpr uint16_t rgb(unsigned r,unsigned g,unsigned b){return uint16_t(((r&248)<<8)|((g&252)<<3)|(b>>3));}
-constexpr uint16_t NAVY=rgb(17,16,27),CREAM=rgb(246,240,229),CYAN=rgb(107,231,218),CORAL=rgb(255,146,158),GREEN=rgb(23,21,36),DARKGREEN=rgb(59,55,78),ROAD=rgb(67,60,89);
-constexpr uint16_t LIT_BLUE=rgb(56,132,137),LIT_CORAL=rgb(154,82,113),HALO=rgb(35,30,50),DUST=rgb(66,55,83),MAP_DIM=rgb(158,143,177);
-constexpr int MAP_X=82,MAP_Y=19,MAP_W=35,MAP_H=44;
+// Bright palette: saturated field and ribbon, deep indigo only for outlines and UI panels.
+constexpr uint16_t NAVY=rgb(22,24,72),CREAM=rgb(255,255,255),CYAN=rgb(20,96,255),CORAL=rgb(255,48,40),GREEN=rgb(64,196,84),DARKGREEN=rgb(70,80,150),ROAD=rgb(255,224,104);
+constexpr uint16_t LIT_BLUE=rgb(132,208,255),LIT_CORAL=rgb(255,160,196),HALO=rgb(36,150,64),DUST=rgb(128,232,120),MAP_DIM=rgb(255,240,170),BOOST=rgb(232,40,255),SLATE=rgb(104,112,168);
+// The top TURBO_ZONE rows are the turbo touch strip; the world fills the rest of the screen.
+constexpr int TURBO_ZONE=28,VIEW_TOP=TURBO_ZONE,CAR_Y=118;
+// Squared distance from the ribbon centre, scaled to fit one byte per pixel.
+constexpr float DEPTH_SCALE=250.f/(ROAD_HALF*ROAD_HALF);
+constexpr int MAP_X=82,MAP_Y=VIEW_TOP+2,MAP_W=35,MAP_H=44;
 struct View {
   State race; uint8_t screen=0,local=0,ready=0; bool linked=false,paused=false,solo=false;
-  int8_t steer=0; uint8_t error=0;
+  int8_t steer=0; uint8_t error=0; // steer: -100 (full left) to 100 (full right).
 };
 struct Glyph {char ch;const char *bits;};
 const Glyph glyphs[]={
@@ -20,7 +25,7 @@ const Glyph glyphs[]={
 class Renderer {
  public:
   uint16_t pixels[W*H]{};
-  uint8_t roadDepth[W*123]{};
+  uint8_t roadDepth[W*(H-VIEW_TOP)]{};
   Track track;
   Vec mapCenter{};float mapScale=1;
   Vec coveragePoints[COVERAGE_SECTIONS+1]{};
@@ -70,6 +75,7 @@ class Renderer {
       marker[0].x=middle-3;marker[1].x=middle+3;
       for(int i=0;i<2;i++)mapLine(actual[i],marker[i],i?CORAL:CYAN);
     }
+    for(const auto &u:s.pickups)if(!u.respawn){auto p=mapPoint(pickupPoint(track,u));rect(std::lround(p.x)-1,std::lround(p.y)-1,2,2,BOOST);}
     for(int i=0;i<2;i++)ghost(std::lround(marker[i].x),std::lround(marker[i].y),i);
     outlinedLabel("P1",MAP_X+5,MAP_Y+MAP_H-7,CYAN);outlinedLabel("P2",MAP_X+22,MAP_Y+MAP_H-7,CORAL);
     rect(MAP_X+(local?21:4),MAP_Y+MAP_H-2,9,3,NAVY);
@@ -78,7 +84,7 @@ class Renderer {
   // Rasterize only the visible capsules; no full-world framebuffer or PSRAM.
   void segment(Vec a,Vec b,float radius,uint16_t color,bool nearest=false){
     int x0=std::max(0,int(std::floor(std::min(a.x,b.x)-radius))),x1=std::min(W-1,int(std::ceil(std::max(a.x,b.x)+radius)));
-    int y0=std::max(15,int(std::floor(std::min(a.y,b.y)-radius))),y1=std::min(137,int(std::ceil(std::max(a.y,b.y)+radius)));
+    int y0=std::max(VIEW_TOP,int(std::floor(std::min(a.y,b.y)-radius))),y1=std::min(H-1,int(std::ceil(std::max(a.y,b.y)+radius)));
     if(x0>x1||y0>y1)return;
     float dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
     for(int y=y0;y<=y1;y++)for(int x=x0;x<=x1;x++){
@@ -86,14 +92,14 @@ class Renderer {
       t=clamp(t,0,1);
       float xx=x-a.x-dx*t,yy=y-a.y-dy*t,d2=xx*xx+yy*yy;
       if(d2<=radius*radius){
-        if(nearest){auto &depth=roadDepth[(y-15)*W+x];uint8_t score=uint8_t(d2+.5f);if(score>depth)continue;depth=score;}
+        if(nearest){auto &depth=roadDepth[(y-VIEW_TOP)*W+x];uint8_t score=uint8_t(d2*DEPTH_SCALE+.5f);if(score>depth)continue;depth=score;}
         pixel(x,y,color);
       }
     }
   }
   static Vec camera(Vec p,const Car &focus){
     float dx=p.x-focus.x,dy=p.y-focus.y,cs=std::cos(focus.angle),sn=std::sin(focus.angle);
-    return {60-dx*sn+dy*cs,103-dx*cs-dy*sn};
+    return {60-dx*sn+dy*cs,CAR_Y-dx*cs-dy*sn};
   }
   void car(const Car &car,int player){
     static const char *sprites[2][11]={
@@ -123,10 +129,11 @@ class Renderer {
     // Closest-section colouring joins bends without seams or lighting across gaps.
     for(int i=0;i<COVERAGE_SECTIONS;i++)segment(camera(coveragePoints[i],focus),camera(coveragePoints[i+1],focus),ROAD_HALF,coveredSection(focus,i)?(local?LIT_CORAL:LIT_BLUE):ROAD,true);
     // Pixel-dissolved edges make a soft colour ribbon without curbs or lane marks.
-    for(int y=15;y<138;y++)for(int x=0;x<W;x++){
-      auto depth=roadDepth[(y-15)*W+x];
-      if(depth>=110&&depth!=255&&((x+y)&1))pixel(x,y,HALO);
+    for(int y=VIEW_TOP;y<H;y++)for(int x=0;x<W;x++){
+      auto depth=roadDepth[(y-VIEW_TOP)*W+x];
+      if(depth>=uint8_t((ROAD_HALF-1.5f)*(ROAD_HALF-1.5f)*DEPTH_SCALE)&&depth!=255&&((x+y)&1))pixel(x,y,HALO);
     }
+    for(const auto &u:s.pickups)if(!u.respawn){Vec p=camera(pickupPoint(track,u),focus);upgrade(std::lround(p.x),std::lround(p.y),s.tick);}
     for(int i=0;i<2;i++){
       auto c=s.cars[i];Vec p=camera({c.x,c.y},focus);c.x=p.x;c.y=p.y;c.angle=wrap(c.angle-focus.angle-PI_F/2);
       float dx=std::cos(c.angle),dy=std::sin(c.angle);
@@ -138,29 +145,38 @@ class Renderer {
     }
     // A geometric ghost keeps the opponent visible outside the camera.
     Vec other=camera({s.cars[1-local].x,s.cars[1-local].y},focus);
-    if(other.x<5||other.x>114||other.y<21||other.y>128){
-      int x=int(clamp(other.x,6,108)),y=int(clamp(other.y,23,126));
+    if(other.x<5||other.x>114||other.y<VIEW_TOP+6||other.y>H-6){
+      int x=int(clamp(other.x,6,113)),y=int(clamp(other.y,VIEW_TOP+8,H-8));
       ghost(x,y,1-local);
     }
+  }
+  // Pulsing double chevron: a speed upgrade waiting on the ribbon.
+  void upgrade(int px,int py,uint32_t tick){
+    const bool flash=(tick/8)&1;
+    for(int y=-4;y<=4;y++)for(int x=-4;x<=4;x++){const int d=std::abs(x)+std::abs(y);if(d<=4)pixel(px+x,py+y,d==4?(flash?CREAM:NAVY):BOOST);}
+    for(int k=-1;k<=1;k++){pixel(px+k,py-1-std::abs(k),CREAM);pixel(px+k,py+2-std::abs(k),CREAM);}
   }
   void button(int y,const char *text,uint16_t color){rect(17,y,86,16,color);rect(18,y+1,84,14,NAVY);center(text,y+5,CREAM);}
   void panel(int y,int height){rect(10,y,100,height,NAVY);rect(11,y+1,98,1,DUST);}
   void draw(const View &view){
     const auto &s=view.race;world(s,view.local);
-    char txt[32];uint16_t color=view.local?CORAL:CYAN;const auto &c=s.cars[view.local];
-    rect(0,0,W,15,NAVY);rect(0,138,W,22,NAVY);
-    std::snprintf(txt,sizeof(txt),"P%u",view.local+1);label(txt,4,5,color);
-    std::snprintf(txt,sizeof(txt),"LAP %u/3",std::min(3,int(c.lap)+1));label(txt,24,5,CREAM);
-    std::snprintf(txt,sizeof(txt),"%d%%",coveragePercent(c));label(txt,64,5,color);
-    label(view.solo?"SOLO":"LINK",94,5,view.linked||view.solo?CREAM:rgb(124,134,131));
-    for(int i=0;i<2;i++){
-      int x=i?82:2;rect(x,140,36,18,view.steer==(i?1:-1)?color:ROAD);
-      int cx=x+18;for(int j=0;j<4;j++)rect(cx+(i?j:-j)-1,145+j-1,3,8-2*j,CREAM);
-    }
-    rect(41,140,38,18,c.cooldown==0||c.boost>0?color:ROAD);
-    center(c.boost>0?"TURBO!":c.cooldown>0?"CHARGE":"TURBO",144,c.cooldown==0||c.boost>0?NAVY:CREAM);
+    char txt[32];uint16_t color=view.local?CORAL:CYAN,light=view.local?LIT_CORAL:LIT_BLUE;const auto &c=s.cars[view.local];
+    rect(0,0,W,TURBO_ZONE,NAVY);
+    std::snprintf(txt,sizeof(txt),"P%u",view.local+1);label(txt,3,3,light);
+    for(int i=0;i<MAX_UPGRADES;i++)rect(12+i*4,3,3,5,i<c.upgrades?BOOST:SLATE);
+    std::snprintf(txt,sizeof(txt),"LAP %u/3",std::min(3,int(c.lap)+1));label(txt,28,3,CREAM);
+    std::snprintf(txt,sizeof(txt),"%d%%",coveragePercent(c));label(txt,62,3,light);
+    label(view.solo?"SOLO":"LINK",101,3,view.linked||view.solo?CREAM:SLATE);
+    // The whole strip is the turbo button; its fill shows burst time, then recharge.
+    const bool armed=c.cooldown==0||c.boost>0;
+    rect(2,11,W-4,15,armed?color:SLATE);
+    center(c.boost>0?"TURBO!":c.cooldown>0?"CHARGING":"TAP HERE: TURBO",13,CREAM);
     float fill=c.boost>0?c.boost/TURBO_TIME:c.cooldown>0?1-c.cooldown/TURBO_RECOVERY:1;
-    rect(44,153,32,2,NAVY);rect(44,153,int(32*clamp(fill,0,1)),2,CREAM);
+    rect(5,21,W-10,3,NAVY);rect(5,21,int((W-10)*clamp(fill,0,1)),3,c.boost>0?BOOST:CREAM);
+    if(view.screen==4&&s.phase!=FINISHED){
+      // Finger position along the bottom edge: the steering is proportional to it.
+      int x=60+view.steer*55/100;rect(59,H-4,2,4,NAVY);rect(x-3,H-4,7,4,NAVY);rect(x-2,H-3,5,2,view.steer?light:CREAM);
+    }
     if(view.screen==4&&s.phase==RACING&&!view.paused)miniMap(s,view.local);
     if(view.screen==0){
       panel(43,86);center("POCKET",49,CREAM,2);center("RALLY",62,CORAL,2);

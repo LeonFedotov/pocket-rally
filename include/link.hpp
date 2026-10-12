@@ -7,12 +7,12 @@
 #include "game.hpp"
 
 namespace rally {
-constexpr uint8_t RADIO_CHANNEL=6,PROTOCOL=3;
+constexpr uint8_t RADIO_CHANNEL=6,PROTOCOL=4;
 constexpr uint32_t MAGIC=0x52414c59;
 enum Kind:uint8_t { HELLO=1,JOIN=2,WELCOME=3,CONTROL=4,SNAPSHOT=5 };
 struct Packet {
   uint32_t magic=MAGIC,session=0,boot=0,sequence=0;
-  uint8_t version=PROTOCOL,kind=0,ready=0; int8_t steer=0;
+  uint8_t version=PROTOCOL,kind=0,ready=0; int8_t steer=0; // steer: -100..100
   uint8_t paused=0,reserved=0;uint16_t turboRequest=0;
   State race{};
 };
@@ -87,7 +87,7 @@ class Link {
   }
   void accept(const Received &rx,Game &game){
     const Packet &p=rx.packet;
-    if(p.magic!=MAGIC||p.version!=PROTOCOL||p.kind<HELLO||p.kind>SNAPSHOT||p.steer<-1||p.steer>1)return;
+    if(p.magic!=MAGIC||p.version!=PROTOCOL||p.kind<HELLO||p.kind>SNAPSHOT||p.steer<-100||p.steer>100)return;
     if(role==GUEST&&p.kind==HELLO&&(!chosen||std::memcmp(peer,rx.mac,6)==0)){
       if(chosen&&session==p.session&&peerBoot==p.boot)return;
       if(!add(rx.mac))return;

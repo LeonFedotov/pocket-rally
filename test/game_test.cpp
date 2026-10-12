@@ -13,10 +13,13 @@ int main(int argc,char **argv){
   assert(game.track.project(250,250).distance>15);
   for(int n=0;n<180;n++)game.step(1.f/60,0,0);
   assert(game.state.clock==0);
+  bool mistake=false,backtrack=false,offRibbon=false;
   for(int n=0;n<20000&&game.state.phase!=rally::FINISHED;n++){
     game.step(1.f/60,game.bot(0),game.bot(1),game.state.cars[0].turboRequest+game.botTurbo(0),game.state.cars[1].turboRequest+game.botTurbo(1));assert(rally::validState(game.state));
+    for(int i=0;i<2;i++){mistake|=game.brains[i].mistake>0;backtrack|=game.brains[i].target>=0;offRibbon|=game.track.project(game.state.cars[i].x,game.state.cars[i].y).distance>rally::ROAD_HALF;}
   }
-  assert(game.state.phase==rally::FINISHED);assert(game.state.clock<150);
+  assert(game.state.phase==rally::FINISHED);assert(game.state.clock<240);
+  assert(mistake&&offRibbon&&backtrack); // Bots err, leave the ribbon and go back for missed sections.
   assert(game.state.cars[game.state.winner==2?0:game.state.winner].lap==3);
   std::cout<<"Bot race: "<<game.state.clock<<"s; winner="<<int(game.state.winner)+1<<"\n";
   auto finished=game.state;game.step(1,1,1);assert(game.state.tick==finished.tick);
@@ -59,13 +62,13 @@ int main(int argc,char **argv){
   bad=game.state;bad.cars[0].boost=3;assert(!rally::validState(bad));
   bad=game.state;bad.cars[0].cooldown=std::numeric_limits<float>::infinity();assert(!rally::validState(bad));
   game.reset(48);assert(game.state.cars[0].boost==0&&game.state.cars[0].turboRequest==0);
-  // The camera keeps its car at (60,103), forward up, and its right side right.
+  // The camera keeps its car at (60,CAR_Y), forward up, and its right side right.
   for(float angle=-3;angle<=3;angle+=.3f){
     rally::Car c;c.x=220;c.y=220;c.angle=angle;
     auto center=rally::Renderer::camera({c.x,c.y},c),front=rally::Renderer::camera({c.x+10*std::cos(angle),c.y+10*std::sin(angle)},c),right=rally::Renderer::camera({c.x-10*std::sin(angle),c.y+10*std::cos(angle)},c);
-    assert(std::fabs(center.x-60)<.001f&&std::fabs(center.y-103)<.001f);
-    assert(std::fabs(front.x-60)<.001f&&std::fabs(front.y-93)<.001f);
-    assert(std::fabs(right.x-70)<.001f&&std::fabs(right.y-103)<.001f);
+    assert(std::fabs(center.x-60)<.001f&&std::fabs(center.y-rally::CAR_Y)<.001f);
+    assert(std::fabs(front.x-60)<.001f&&std::fabs(front.y-(rally::CAR_Y-10))<.001f);
+    assert(std::fabs(right.x-70)<.001f&&std::fabs(right.y-rally::CAR_Y)<.001f);
   }
   // Rendering must preserve a short missed section between lit neighbours.
   game.reset(49);game.state.phase=rally::RACING;
@@ -82,11 +85,41 @@ int main(int argc,char **argv){
   }
   auto background=roadRenderer.pixels[rally::MAP_Y*rally::W+rally::MAP_X];roadRenderer.miniMap(game.state,0);
   assert(roadRenderer.pixels[rally::MAP_Y*rally::W+rally::MAP_X]==background);
+  // The ribbon is wide: 18 world pixels from the centre line still collects coverage.
+  game.reset(50);game.state.phase=rally::RACING;
+  {auto p=game.track.at(game.track.length*80.5f/rally::COVERAGE_SECTIONS);auto &c=game.state.cars[0];c.x=p.point.x-p.tangent.y*18;c.y=p.point.y+p.tangent.x*18;c.speed=0;
+  game.state.cars[1].x=515;game.state.cars[1].y=535;for(auto &u:game.state.pickups)u.respawn=rally::PICKUP_RESPAWN;game.step(1.f/60,0,0);assert(rally::coveredSection(c,80));}
+  // A bot that skipped sections turns back for the nearest hole, then resumes forward.
+  game.reset(51);game.state.phase=rally::RACING;game.brains[0].calm=1e6f;
+  {auto &c=game.state.cars[0];for(int i=10;i<40;i++)if(i<30||i>32){c.coverage[i/32]|=uint32_t(1)<<(i%32);c.covered++;}
+  auto p=game.track.at(game.track.length*40.5f/rally::COVERAGE_SECTIONS);c.x=p.point.x;c.y=p.point.y;c.angle=std::atan2(p.tangent.y,p.tangent.x);c.speed=40;
+  game.state.cars[1].x=515;game.state.cars[1].y=535;for(auto &u:game.state.pickups)u.respawn=rally::PICKUP_RESPAWN;
+  game.step(1.f/60,game.bot(0),0);assert(game.brains[0].target==32);
+  int n=0;for(;n<900&&!(rally::coveredSection(c,30)&&rally::coveredSection(c,31)&&rally::coveredSection(c,32));n++){game.step(1.f/60,game.bot(0),0);for(auto &u:game.state.pickups)u.respawn=rally::PICKUP_RESPAWN;}
+  assert(n<900);for(int k=0;k<5;k++)game.step(1.f/60,game.bot(0),0);assert(game.brains[0].target==-1);
+  for(int k=0;k<300;k++)game.step(1.f/60,game.bot(0),0);
+  assert(game.track.project(c.x,c.y).s>game.track.length*41/rally::COVERAGE_SECTIONS);}
+  // Speed upgrades: collected on contact, stack to a cap, respawn elsewhere and are validated.
+  game.reset(52);assert(rally::validState(game.state));
+  for(const auto &u:game.state.pickups){assert(u.respawn==0&&u.section<rally::COVERAGE_SECTIONS);}
+  game.state.phase=rally::RACING;
+  {auto &c=game.state.cars[0];auto &u=game.state.pickups[0];for(int k=1;k<rally::PICKUPS;k++)game.state.pickups[k].respawn=rally::PICKUP_RESPAWN;
+  game.state.cars[1].x=515;game.state.cars[1].y=535;auto at=rally::pickupPoint(game.track,u);c.x=at.x;c.y=at.y;c.speed=0;
+  game.step(1.f/60,0,0);assert(c.upgrades==1&&u.respawn>0);
+  bad=game.state;bad.cars[0].upgrades=rally::MAX_UPGRADES+1;assert(!rally::validState(bad));
+  bad=game.state;bad.pickups[1].section=rally::COVERAGE_SECTIONS;assert(!rally::validState(bad));
+  bad=game.state;bad.pickups[1].offset=100;assert(!rally::validState(bad));
+  u.respawn=1;game.step(1.f/60,0,0);assert(u.respawn==0&&rally::validState(game.state));
+  c.upgrades=rally::MAX_UPGRADES;at=rally::pickupPoint(game.track,u);c.x=at.x;c.y=at.y;game.step(1.f/60,0,0);assert(u.respawn==0&&c.upgrades==rally::MAX_UPGRADES);}
+  {rally::Game slow,fast;slow.reset(53);fast.reset(53);slow.state.phase=fast.state.phase=rally::RACING;fast.state.cars[0].upgrades=rally::MAX_UPGRADES;
+  for(int n=0;n<120;n++){for(auto *g:{&slow,&fast})for(auto &u:g->state.pickups)u.respawn=rally::PICKUP_RESPAWN;slow.step(1.f/60,0,0);fast.step(1.f/60,0,0);}
+  assert(slow.state.cars[0].speed<49&&fast.state.cars[0].speed>48*1.3f);
+  fast.reset(54);assert(fast.state.cars[0].upgrades==0);}
   if(argc>1){
     game.reset(46);for(int n=0;n<430;n++)game.step(1.f/60,game.bot(0),game.bot(1));
     rally::Renderer renderer;renderer.init(game.track);rally::View v;v.race=game.state;v.screen=4;v.linked=true;renderer.draw(v);
     std::ofstream f(argv[1],std::ios::binary);f<<"P6\n120 160\n255\n";
     for(auto color:renderer.pixels){char rgb[3]={char((color>>11)*255/31),char(((color>>5)&63)*255/63),char((color&31)*255/31)};f.write(rgb,3);}
   }
-  std::cout<<"Coverage laps, missed sections, reverse collection, personal progress, off-road speed, collisions, finish freeze, invalid state, turbo and camera checks passed.\n";
+  std::cout<<"Coverage laps, missed sections, reverse collection, personal progress, off-road speed, collisions, finish freeze, invalid state, turbo, camera, wide ribbon, bot backtracking and speed upgrade checks passed.\n";
 }

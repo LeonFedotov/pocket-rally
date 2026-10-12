@@ -20,7 +20,7 @@
     @media(max-width:440px) { #pocket-rally-preview .pr-screens { grid-template-columns:minmax(0,1fr);max-width:256px;gap:18px; } #pocket-rally-preview .pr-head { justify-content:center;text-align:center; } #pocket-rally-preview .pr-actions { justify-content:center; } }
   </style>
   <div class="pr-head">
-    <div><div class="pr-title">POCKET RALLY</div><div class="pr-sub">Colour the ribbon · 3 laps · 2-second turbo</div></div>
+    <div><div class="pr-title">POCKET RALLY</div><div class="pr-sub">Colour the ribbon · 3 laps · 2-second turbo · speed upgrades</div></div>
     <div class="pr-actions">
       <button class="cursor-interaction" type="button" data-mode="solo" aria-pressed="false">Race a bot</button>
       <button class="cursor-interaction" type="button" data-mode="duo" aria-pressed="false">Two players</button>
@@ -30,13 +30,13 @@
   <div class="pr-screens">
     <div class="pr-device">
       <div class="pr-label"><span>BLUE · PLAYER 1</span><span>A / D · W</span></div>
-      <canvas class="cursor-interaction" data-car="0" width="120" height="160" role="img" aria-label="Player 1 follows the filled blue glider. Touch every section of the ribbon to colour it and complete a lap. The transparent minimap shows your coverage and both geometric ghosts. Moving outside the ribbon keeps normal speed. Hold left or right to steer; tap bottom centre for turbo."></canvas>
-      <div class="pr-steer"><button class="cursor-interaction" type="button" data-steer="0,-1">← Left</button><button class="cursor-interaction" type="button" data-turbo="0">Turbo</button><button class="cursor-interaction" type="button" data-steer="0,1">Right →</button></div>
+      <canvas class="cursor-interaction" data-car="0" width="120" height="160" role="img" aria-label="Player 1 follows the filled blue glider. Touch every section of the ribbon to colour it and complete a lap. The transparent minimap shows your coverage and both geometric ghosts. Pulsing chevrons on the ribbon are speed upgrades, up to three, shown as pips beside the player number. Moving outside the ribbon keeps normal speed. Press or drag anywhere on the screen to steer in proportion to your finger, centre to go straight; touch or slide into the top strip for turbo."></canvas>
+      <div class="pr-steer"><button class="cursor-interaction" type="button" data-steer="0,-1" aria-label="Steer full left">← Left</button><button class="cursor-interaction" type="button" data-turbo="0">Turbo</button><button class="cursor-interaction" type="button" data-steer="0,1" aria-label="Steer full right">Right →</button></div>
     </div>
     <div class="pr-device">
       <div class="pr-label"><span>CORAL · PLAYER 2</span><span>← / → · ↑</span></div>
-      <canvas class="cursor-interaction" data-car="1" width="120" height="160" role="img" aria-label="Player 2 follows the open coral glider. Touch every section of the ribbon to colour it and complete a lap. The transparent minimap shows your coverage and both geometric ghosts. Moving outside the ribbon keeps normal speed. Hold left or right to steer; tap bottom centre for turbo."></canvas>
-      <div class="pr-steer"><button class="cursor-interaction" type="button" data-steer="1,-1">← Left</button><button class="cursor-interaction" type="button" data-turbo="1">Turbo</button><button class="cursor-interaction" type="button" data-steer="1,1">Right →</button></div>
+      <canvas class="cursor-interaction" data-car="1" width="120" height="160" role="img" aria-label="Player 2 follows the open coral glider. Touch every section of the ribbon to colour it and complete a lap. The transparent minimap shows your coverage and both geometric ghosts. Pulsing chevrons on the ribbon are speed upgrades, up to three, shown as pips beside the player number. Moving outside the ribbon keeps normal speed. Press or drag anywhere on the screen to steer in proportion to your finger, centre to go straight; touch or slide into the top strip for turbo."></canvas>
+      <div class="pr-steer"><button class="cursor-interaction" type="button" data-steer="1,-1" aria-label="Steer full left">← Left</button><button class="cursor-interaction" type="button" data-turbo="1">Turbo</button><button class="cursor-interaction" type="button" data-steer="1,1" aria-label="Steer full right">Right →</button></div>
     </div>
   </div>
   <div class="pr-footer"><span role="status" aria-live="polite">Choose a race to start.</span><button class="cursor-interaction" type="button" data-pause disabled>Pause</button></div>
@@ -50,18 +50,28 @@
     const images=contexts.map(c=>c.createImageData(120,160));
     const status=root.querySelector('[role="status"]'),pauseButton=root.querySelector('[data-pause]');
     const modes=[...root.querySelectorAll('[data-mode]')];
-    const steer=[0,0],requests=[0,0],points=art.track,lengths=[0];let length=0;
+    // Shared constants and palette come from the firmware via art.json; only turbo timing and screen size live here.
+    const W=120,H=160,LAPS=3,TURBO_TIME=2,TURBO_RECOVERY=5,rules=art.rules,{turboZone:TURBO_ZONE,viewTop:VIEW_TOP,carY:CAR_Y,depthScale:DEPTH_SCALE}=art.layout,ROAD_HALF=rules.roadHalf;
+    const {navy,cream,cyan,coral,green,road,litBlue,litCoral,halo,dust,mapDim,boost:boostColor,slate}=art.palette,edge=Math.floor((ROAD_HALF-1.5)**2*DEPTH_SCALE);
+    const steer=[0,0],requests=[0,0],turns=[0,0],inZone=[false,false],points=art.track,lengths=[0];let length=0;
     for(let i=1;i<points.length;i++){length+=Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]);lengths.push(length);}
-    const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+    const clamp=(n,a,b)=>Math.max(a,Math.min(b,n)),lround=v=>Math.sign(v)*Math.round(Math.abs(v));
     const wrap=a=>{while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;return a;};
-    const rgb=(r,g,b)=>((r&248)<<8)|((g&252)<<3)|(b>>3);
-    const navy=rgb(17,16,27),cream=rgb(246,240,229),cyan=rgb(107,231,218),coral=rgb(255,146,158),green=rgb(23,21,36),road=rgb(67,60,89);
-    const litBlue=rgb(56,132,137),litCoral=rgb(154,82,113),halo=rgb(35,30,50),dust=rgb(66,55,83),mapDim=rgb(158,143,177);
+    // xorshift32 on uint32, exactly like nextRandom/unitRandom in game.hpp.
+    const nextRandom=o=>{let s=o.rng;s=(s^(s<<13))>>>0;s=(s^(s>>>17))>>>0;s=(s^(s<<5))>>>0;return o.rng=s;},unitRandom=o=>(nextRandom(o)>>>8)/16777216;
     const sections=art.coverageSections,coveragePoints=Array.from({length:sections+1},(_,i)=>at(length*i/sections));
     const hasCoverage=(c,i)=>(c.coverage[i>>>5]&(1<<(i&31)))!==0;
-    let mode='ready',paused=false,phase=0,clock=0,countdown=3,winner=-1,tick=0,cars=[],lastLaps='';
-    function reset(){const p=at(-10);cars=[-5,5].map(offset=>({x:p.x-p.ty*offset,y:p.y+p.tx*offset,angle:Math.atan2(p.ty,p.tx),speed:0,lap:0,coverage:new Uint32Array(sections/32),covered:0,boost:0,cooldown:0,request:0}));phase=1;clock=0;countdown=3;winner=-1;tick=0;lastLaps='';steer.fill(0);requests.fill(0);paused=false;}
-    reset();phase=0;
+    const random={rng:1},automated=i=>mode==='demo'||(mode==='solo'&&i===1);
+    let mode='ready',paused=false,phase=0,clock=0,countdown=3,winner=-1,tick=0,cars=[],pickups=[],brains=[],lastLaps='';
+    function spawn(u){u.section=nextRandom(random)%sections;u.offset=nextRandom(random)%(2*rules.pickupSpread+1)-rules.pickupSpread;u.respawn=0;return u;}
+    function pickupPoint(u){const a=at(length*(u.section+.5)/sections);return {x:a.x-a.ty*u.offset,y:a.y+a.tx*u.offset};}
+    function reset(id=Math.floor(Math.random()*4294967296)){
+      const p=at(-10);cars=[-5,5].map(offset=>({x:p.x-p.ty*offset,y:p.y+p.tx*offset,angle:Math.atan2(p.ty,p.tx),speed:0,finish:0,lap:0,upgrades:0,coverage:new Uint32Array(sections/32),covered:0,boost:0,cooldown:0,request:0}));
+      random.rng=Math.imul(id^0x9e3779b9,2654435761)>>>0||1;pickups=Array.from({length:rules.pickups},()=>spawn({}));
+      brains=[0,1].map(i=>{const b={rng:(Math.imul(id+1,i?0x85ebca6b:0xc2b2ae35)|1)>>>0,mistake:0,calm:3,bias:0,hunt:0,rest:0,target:-1};b.calm=2+4*unitRandom(b);return b;});
+      phase=1;clock=0;countdown=3;winner=-1;tick=0;lastLaps='';steer.fill(0);requests.fill(0);turns.fill(0);inZone.fill(false);paused=false;
+    }
+    reset(0);phase=0;
     function project(x,y){
       let out={distance:Infinity,s:0};
       for(let i=0;i<points.length-1;i++){
@@ -70,21 +80,42 @@
         if(d2<out.distance)out={distance:d2,s:lengths[i]+t*(lengths[i+1]-lengths[i])};
       }out.distance=Math.sqrt(out.distance);return out;
     }
-    function at(s){s=((s%length)+length)%length;for(let i=0;i<points.length-1;i++)if(s<=lengths[i+1]){const l=lengths[i+1]-lengths[i],t=(s-lengths[i])/l,a=points[i],b=points[i+1];return {x:a[0]+(b[0]-a[0])*t,y:a[1]+(b[1]-a[1])*t,tx:(b[0]-a[0])/l,ty:(b[1]-a[1])/l};}}
-    function bot(i){const c=cars[i],p=project(c.x,c.y),t=at(p.s+16+c.speed*.10);return clamp(wrap(Math.atan2(t.y-c.y,t.x-c.x)-c.angle)*2.1,-1,1);}
-    function botTurbo(i){const c=cars[i],p=project(c.x,c.y),a=at(p.s+35),b=at(p.s+90);return c.cooldown===0&&p.distance<4&&Math.abs(bot(i))<.15&&Math.abs(wrap(Math.atan2(b.ty,b.tx)-Math.atan2(a.ty,a.tx)))<.35;}
+    function at(s){s=((s%length)+length)%length;for(let i=0;i<points.length-1;i++)if(s<=lengths[i+1]){const l=lengths[i+1]-lengths[i],t=(s-lengths[i])/l,a=points[i],b=points[i+1];return {x:a[0]+(b[0]-a[0])*t,y:a[1]+(b[1]-a[1])*t,tx:(b[0]-a[0])/l,ty:(b[1]-a[1])/l};}return {x:points[0][0],y:points[0][1],tx:1,ty:0};}
+    // Pure pursuit along the ribbon, reversed while going back for a missed section; a mistake holds a hard bias.
+    function bot(i){const b=brains[i],c=cars[i];if(b.mistake>0)return b.bias;const p=project(c.x,c.y),look=16+c.speed*.10,t=at(b.target>=0?p.s-look:p.s+look);return clamp(wrap(Math.atan2(t.y-c.y,t.x-c.x)-c.angle)*2.1,-1,1);}
+    function botTurbo(i){const c=cars[i],p=project(c.x,c.y),a=at(p.s+35),b=at(p.s+90);return phase===2&&brains[i].target<0&&c.cooldown===0&&p.distance<4&&Math.abs(bot(i))<.15&&Math.abs(wrap(Math.atan2(b.ty,b.tx)-Math.atan2(a.ty,a.tx)))<.35;}
+    // Nearest uncovered section shortly behind, with covered ribbon beyond it: a skipped hole.
+    function hole(c,current){let first=-1;for(let k=1;k<=rules.backtrackSections;k++){const section=(current-k+sections)%sections;if(!hasCoverage(c,section)){if(first<0)first=section;}else if(first>=0)return first;}return -1;}
+    function think(i,dt){
+      const b=brains[i],c=cars[i];if(c.lap>=LAPS)return;
+      const current=Math.min(sections-1,Math.floor(project(c.x,c.y).s*sections/length));
+      if(b.target>=0&&(c.covered===0||hasCoverage(c,b.target)))b.target=-1;
+      if(b.target>=0&&((current-b.target+sections)%sections>rules.backtrackSections+6||(b.hunt+=dt)>6)){b.target=-1;b.rest=5;}
+      if(b.rest>0)b.rest-=dt;else if(b.target<0){b.target=hole(c,current);b.hunt=0;}
+      if(b.mistake>0)b.mistake=Math.max(0,b.mistake-dt);
+      else if(b.target<0&&(b.calm-=dt)<=0){b.mistake=.4+.5*unitRandom(b);b.bias=unitRandom(b)<.5?-1:1;b.calm=3+5*unitRandom(b);}
+    }
+    function collect(){
+      for(const u of pickups){
+        if(u.respawn){if(--u.respawn===0)spawn(u);continue;}
+        const p=pickupPoint(u);
+        for(const c of cars)if(c.upgrades<rules.maxUpgrades&&(c.x-p.x)**2+(c.y-p.y)**2<rules.pickupRadius**2){c.upgrades++;u.respawn=rules.pickupRespawn;break;}
+      }
+    }
     function turbo(i){if(phase===2&&!paused&&cars[i].cooldown===0)requests[i]=(requests[i]+1)&65535;}
     function say(text){if(status.textContent!==text)status.textContent=text;}
     function step(dt){
       if(phase===0||phase===3||paused)return;tick++;
       if(phase===1){countdown-=dt;if(countdown<=0){countdown=0;phase=2;say('GO! Colour the whole ribbon to complete a lap.');}return;}
       clock+=dt;
+      // Like the firmware loop, bot inputs are read before the tick: turbo → move → collide → coverage → pickups → brains.
+      for(let i=0;i<2;i++){if(automated(i)&&botTurbo(i))requests[i]=(requests[i]+1)&65535;turns[i]=automated(i)?bot(i):steer[i];}
       cars.forEach((c,i)=>{
-        const automated=mode==='demo'||(mode==='solo'&&i===1),turn=automated?bot(i):steer[i];
-        if(automated&&botTurbo(i))requests[i]=(requests[i]+1)&65535;
         c.boost=Math.max(0,c.boost-dt);c.cooldown=Math.max(0,c.cooldown-dt);
-        if(requests[i]!==c.request){c.request=requests[i];if(c.cooldown===0){c.boost=2;c.cooldown=7;}}
-        const target=(c.boost>0?78:48)-Math.abs(turn)*8;
+        if(requests[i]!==c.request){c.request=requests[i];if(c.cooldown===0){c.boost=TURBO_TIME;c.cooldown=TURBO_TIME+TURBO_RECOVERY;}}
+      });
+      cars.forEach((c,i)=>{
+        const turn=clamp(turns[i],-1,1),target=(c.boost>0?78:48)*(1+rules.upgradeGain*c.upgrades)-Math.abs(turn)*8;
         c.speed+=(target-c.speed)*Math.min(1,dt*(c.boost>0?7:3.5));
         c.angle=wrap(c.angle+turn*2.35*dt*(.65+.35*c.speed/48));
         c.x=clamp(c.x+Math.cos(c.angle)*c.speed*dt,5,515);c.y=clamp(c.y+Math.sin(c.angle)*c.speed*dt,5,535);
@@ -96,89 +127,100 @@
         if(closing>0){a.speed=Math.max(5,a.speed-closing*.3);b.speed=Math.max(5,b.speed-closing*.1);}
       }
       cars.forEach(c=>{
-        if(c.lap>=3)return;const p=project(c.x,c.y);if(p.distance>12)return;
+        if(c.lap>=LAPS)return;const p=project(c.x,c.y);if(p.distance>ROAD_HALF)return;
         const section=Math.min(sections-1,Math.floor(p.s*sections/length));if(hasCoverage(c,section))return;
         c.coverage[section>>>5]|=1<<(section&31);c.covered++;
-        if(c.covered===sections){c.lap++;if(c.lap===3)c.finish=clock;else{c.coverage.fill(0);c.covered=0;}}
+        if(c.covered===sections){c.lap++;if(c.lap===LAPS)c.finish=clock;else{c.coverage.fill(0);c.covered=0;}}
       });
-      if(cars.some(c=>c.lap>=3)){
-        phase=3;winner=cars.every(c=>c.lap>=3)?(Math.abs(a.finish-b.finish)<.0001?2:a.finish<b.finish?0:1):(a.lap>=3?0:1);
+      collect();think(0,dt);think(1,dt);
+      if(cars.some(c=>c.lap>=LAPS)){
+        phase=3;winner=cars.every(c=>c.lap>=LAPS)?(Math.abs(a.finish-b.finish)<.0001?2:a.finish<b.finish?0:1):(a.lap>=LAPS?0:1);
         pauseButton.disabled=true;say((winner===2?'Photo finish':(winner===0?'Blue':'Coral')+' wins')+' · '+clock.toFixed(1)+'s. Choose a mode for a rematch.');
-      }else {const laps=cars.map(c=>Math.min(3,c.lap+1)).join('-');if(laps!==lastLaps){lastLaps=laps;if(cars.some(c=>c.lap>0))say('Blue lap '+(cars[0].lap+1)+'/3 · Coral lap '+(cars[1].lap+1)+'/3');}}
+      }else {const laps=cars.map(c=>Math.min(LAPS,c.lap+1)).join('-');if(laps!==lastLaps){lastLaps=laps;if(cars.some(c=>c.lap>0))say('Blue lap '+(cars[0].lap+1)+'/3 · Coral lap '+(cars[1].lap+1)+'/3');}}
     }
     function draw(local){
-      const pixels=new Uint16Array(120*160).fill(green);
-      const roadDepth=new Uint8Array(120*123).fill(255);
-      function rect(x,y,w,h,col){for(let yy=Math.max(0,Math.round(y));yy<Math.min(160,Math.round(y)+h);yy++)for(let xx=Math.max(0,Math.round(x));xx<Math.min(120,Math.round(x)+w);xx++)pixels[yy*120+xx]=col;}
+      const pixels=new Uint16Array(W*H).fill(green);
+      const roadDepth=new Uint8Array(W*(H-VIEW_TOP)).fill(255);
+      function rect(x,y,w,h,col){for(let yy=Math.max(0,Math.round(y));yy<Math.min(H,Math.round(y)+h);yy++)for(let xx=Math.max(0,Math.round(x));xx<Math.min(W,Math.round(x)+w);xx++)pixels[yy*W+xx]=col;}
       function text(txt,x,y,col,size=1){for(const ch of txt){const bits=art.glyphs[ch];if(bits)for(let k=0;k<15;k++)if(bits[k]==='1')rect(x+(k%3)*size,y+Math.floor(k/3)*size,size,size,col);x+=4*size;}}
-      function center(txt,y,col,size=1){text(txt,(120-(txt.length*4-1)*size)/2,y,col,size);}
+      function center(txt,y,col,size=1){text(txt,Math.trunc((W-(txt.length*4-1)*size)/2),y,col,size);}
       function outlinedText(txt,x,y,col){text(txt,x-1,y,navy);text(txt,x+1,y,navy);text(txt,x,y-1,navy);text(txt,x,y+1,navy);text(txt,x,y,col);}
       function ghost(px,py,player){for(let y=-3;y<=3;y++)for(let x=-3;x<=3;x++){const d=Math.abs(x)+Math.abs(y);if(d<=3)rect(px+x,py+y,1,1,d===3?navy:d===2?(player?coral:cyan):d===0?cream:player?navy:cyan);}}
+      // Pulsing double chevron: a speed upgrade waiting on the ribbon.
+      function upgrade(px,py){const flash=(tick>>>3)&1;for(let y=-4;y<=4;y++)for(let x=-4;x<=4;x++){const d=Math.abs(x)+Math.abs(y);if(d<=4)rect(px+x,py+y,1,1,d===4?(flash?cream:navy):boostColor);}for(let k=-1;k<=1;k++){rect(px+k,py-1-Math.abs(k),1,1,cream);rect(px+k,py+2-Math.abs(k),1,1,cream);}}
       function panel(y,h){rect(10,y,100,h,navy);rect(11,y+1,98,1,dust);}
       const focus=cars[local],cs=Math.cos(focus.angle),sn=Math.sin(focus.angle);
-      function camera(x,y){const dx=x-focus.x,dy=y-focus.y;return {x:60-dx*sn+dy*cs,y:103-dx*cs-dy*sn};}
+      function camera(x,y){const dx=x-focus.x,dy=y-focus.y;return {x:60-dx*sn+dy*cs,y:CAR_Y-dx*cs-dy*sn};}
       function segment(a,b,r,col,nearest=false){
-        const x0=Math.max(0,Math.floor(Math.min(a.x,b.x)-r)),x1=Math.min(119,Math.ceil(Math.max(a.x,b.x)+r)),y0=Math.max(15,Math.floor(Math.min(a.y,b.y)-r)),y1=Math.min(137,Math.ceil(Math.max(a.y,b.y)+r));
+        const x0=Math.max(0,Math.floor(Math.min(a.x,b.x)-r)),x1=Math.min(W-1,Math.ceil(Math.max(a.x,b.x)+r)),y0=Math.max(VIEW_TOP,Math.floor(Math.min(a.y,b.y)-r)),y1=Math.min(H-1,Math.ceil(Math.max(a.y,b.y)+r));
         const dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
-        for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const t=l2>0?clamp(((x-a.x)*dx+(y-a.y)*dy)/l2,0,1):0,xx=x-a.x-dx*t,yy=y-a.y-dy*t,d2=xx*xx+yy*yy;if(d2<=r*r){if(nearest){const index=(y-15)*120+x,score=Math.floor(d2+.5);if(score>roadDepth[index])continue;roadDepth[index]=score;}pixels[y*120+x]=col;}}
+        for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const t=l2>0?clamp(((x-a.x)*dx+(y-a.y)*dy)/l2,0,1):0,xx=x-a.x-dx*t,yy=y-a.y-dy*t,d2=xx*xx+yy*yy;if(d2<=r*r){if(nearest){const index=(y-VIEW_TOP)*W+x,score=Math.floor(d2*DEPTH_SCALE+.5);if(score>roadDepth[index])continue;roadDepth[index]=score;}pixels[y*W+x]=col;}}
       }
       for(let row=0;row<8;row++)for(let col=0;col<8;col++){
-        const seed=col*37+row*53,p=camera(col*72+seed%29,row*72+(seed*3)%31),x=Math.round(p.x),y=Math.round(p.y);
+        const seed=col*37+row*53,p=camera(col*72+seed%29,row*72+(seed*3)%31),x=lround(p.x),y=lround(p.y);
         if(seed%3===0){rect(x-2,y,1,1,dust);rect(x+2,y,1,1,dust);rect(x,y-2,1,1,dust);rect(x,y+2,1,1,dust);}else rect(x,y,1,1,dust);
       }
       const projected=points.map(p=>camera(...p));
-      for(let i=0;i<points.length-1;i++)segment(projected[i],projected[i+1],15,halo);
-      for(let i=0;i<sections;i++){const a=coveragePoints[i],b=coveragePoints[i+1];segment(camera(a.x,a.y),camera(b.x,b.y),12,hasCoverage(focus,i)?(local?litCoral:litBlue):road,true);}
-      for(let y=15;y<138;y++)for(let x=0;x<120;x++){const depth=roadDepth[(y-15)*120+x];if(depth>=110&&depth!==255&&((x+y)&1))rect(x,y,1,1,halo);}
+      for(let i=0;i<points.length-1;i++)segment(projected[i],projected[i+1],ROAD_HALF+3,halo);
+      for(let i=0;i<sections;i++){const a=coveragePoints[i],b=coveragePoints[i+1];segment(camera(a.x,a.y),camera(b.x,b.y),ROAD_HALF,hasCoverage(focus,i)?(local?litCoral:litBlue):road,true);}
+      for(let y=VIEW_TOP;y<H;y++)for(let x=0;x<W;x++){const depth=roadDepth[(y-VIEW_TOP)*W+x];if(depth>=edge&&depth!==255&&((x+y)&1))pixels[y*W+x]=halo;}
+      for(const u of pickups)if(!u.respawn){const q=pickupPoint(u),p=camera(q.x,q.y);upgrade(lround(p.x),lround(p.y));}
       cars.forEach((c,i)=>{
         const p=camera(c.x,c.y),heading=wrap(c.angle-focus.angle-Math.PI/2);
         const dx=Math.cos(heading),dy=Math.sin(heading);
-        for(let k=0;k<(c.boost>0?4:2);k++){const d=9+k*4;rect(Math.round(p.x-dx*d),Math.round(p.y-dy*d),k===0?2:1,k===0?2:1,c.boost>0?(i?coral:cyan):(i?litCoral:litBlue));}
-        const angle=((Math.round(heading/(Math.PI/8))%16)+16)%16,frame=art.cars[i*16+angle];
-        for(let y=0;y<18;y++)for(let x=0;x<18;x++)if(frame[y*18+x])rect(Math.round(p.x)+x-8,Math.round(p.y)+y-8,1,1,frame[y*18+x]);
+        for(let k=0;k<(c.boost>0?4:2);k++){const d=9+k*4;rect(lround(p.x-dx*d),lround(p.y-dy*d),k===0?2:1,k===0?2:1,c.boost>0?(i?coral:cyan):(i?litCoral:litBlue));}
+        const angle=((lround(heading/(Math.PI/8))%16)+16)%16,frame=art.cars[i*16+angle];
+        for(let y=0;y<18;y++)for(let x=0;x<18;x++)if(frame[y*18+x])rect(lround(p.x)+x-8,lround(p.y)+y-8,1,1,frame[y*18+x]);
       });
       const o=camera(cars[1-local].x,cars[1-local].y);
-      if(o.x<5||o.x>114||o.y<21||o.y>128){const x=Math.trunc(clamp(o.x,6,108)),y=Math.trunc(clamp(o.y,23,126));ghost(x,y,1-local);}
-      const color=local?coral:cyan,c=cars[local];rect(0,0,120,15,navy);rect(0,138,120,22,navy);
-      text('P'+(local+1),4,5,color);text('LAP '+Math.min(3,c.lap+1)+'/3',24,5,cream);text(mode==='solo'?'SOLO':'LINK',94,5,cream);
-      text(Math.floor(c.covered*100/sections)+'%',64,5,color);
-      for(let i=0;i<2;i++){const x=i?82:2;rect(x,140,36,18,steer[local]===(i?1:-1)?color:road);const cx=x+18;for(let j=0;j<4;j++)rect(cx+(i?j:-j)-1,145+j-1,3,8-2*j,cream);}
-      rect(41,140,38,18,c.cooldown===0||c.boost>0?color:road);center(c.boost>0?'TURBO!':c.cooldown>0?'CHARGE':'TURBO',144,c.cooldown===0||c.boost>0?navy:cream);
-      const fill=c.boost>0?c.boost/2:c.cooldown>0?1-c.cooldown/5:1;rect(44,153,32,2,navy);rect(44,153,Math.trunc(32*clamp(fill,0,1)),2,cream);
+      if(o.x<5||o.x>114||o.y<VIEW_TOP+6||o.y>H-6){const x=Math.trunc(clamp(o.x,6,113)),y=Math.trunc(clamp(o.y,VIEW_TOP+8,H-8));ghost(x,y,1-local);}
+      // Navy HUD on top; the whole strip below it is the turbo button, its fill showing burst time and then recharge.
+      const color=local?coral:cyan,light=local?litCoral:litBlue,c=cars[local];rect(0,0,W,TURBO_ZONE,navy);
+      text('P'+(local+1),3,3,light);for(let i=0;i<rules.maxUpgrades;i++)rect(12+i*4,3,3,5,i<c.upgrades?boostColor:slate);
+      text('LAP '+Math.min(LAPS,c.lap+1)+'/3',28,3,cream);text(Math.floor(c.covered*100/sections)+'%',62,3,light);text(mode==='solo'?'SOLO':'LINK',101,3,cream);
+      rect(2,11,W-4,15,c.cooldown===0||c.boost>0?color:slate);center(c.boost>0?'TURBO!':c.cooldown>0?'CHARGING':'TAP HERE: TURBO',13,cream);
+      const fill=c.boost>0?c.boost/TURBO_TIME:c.cooldown>0?1-c.cooldown/TURBO_RECOVERY:1;rect(5,21,W-10,3,navy);rect(5,21,Math.trunc((W-10)*clamp(fill,0,1)),3,c.boost>0?boostColor:cream);
+      if(phase===1||phase===2){
+        // Steering marker on the bottom edge: the steering is proportional to the finger position.
+        const s=Math.trunc(clamp(automated(local)?turns[local]:steer[local],-1,1)*100),x=60+Math.trunc(s*55/100);
+        rect(59,H-4,2,4,navy);rect(x-3,H-4,7,4,navy);rect(x-2,H-3,5,2,s?light:cream);
+      }
       if(phase===2&&!paused){
         const m=art.map;
         const mapPoint=(x,y)=>({x:m.x+m.w*.5+(x-m.cx)*m.scale,y:m.y+4+(m.h-15)*.5+(y-m.cy)*m.scale});
         function mapLine(a,b,col){
-          let x=Math.round(a.x),y=Math.round(a.y);const tx=Math.round(b.x),ty=Math.round(b.y),dx=Math.abs(tx-x),dy=-Math.abs(ty-y),sx=x<tx?1:-1,sy=y<ty?1:-1;let error=dx+dy;
+          let x=lround(a.x),y=lround(a.y);const tx=lround(b.x),ty=lround(b.y),dx=Math.abs(tx-x),dy=-Math.abs(ty-y),sx=x<tx?1:-1,sy=y<ty?1:-1;let error=dx+dy;
           for(;;){rect(x,y,1,1,col);if(x===tx&&y===ty)break;const e=2*error;if(e>=dy){error+=dy;x+=sx;}if(e<=dx){error+=dx;y+=sy;}}
         }
         for(let i=0;i<points.length-1;i++)segment(mapPoint(...points[i]),mapPoint(...points[i+1]),1.5,navy);
         for(let i=0;i<sections;i++){const a=coveragePoints[i],b=coveragePoints[i+1];mapLine(mapPoint(a.x,a.y),mapPoint(b.x,b.y),hasCoverage(cars[local],i)?(local?coral:cyan):mapDim);}
-        for(let i=0;i<sections;i++)if(!hasCoverage(cars[local],i)){const a=coveragePoints[i],b=coveragePoints[i+1],p=mapPoint((a.x+b.x)*.5,(a.y+b.y)*.5);rect(Math.round(p.x),Math.round(p.y),1,1,mapDim);}
+        for(let i=0;i<sections;i++)if(!hasCoverage(cars[local],i)){const a=coveragePoints[i],b=coveragePoints[i+1],p=mapPoint((a.x+b.x)*.5,(a.y+b.y)*.5);rect(lround(p.x),lround(p.y),1,1,mapDim);}
         const actual=cars.map(c=>{const p=mapPoint(c.x,c.y);return {x:clamp(p.x,m.x+4,m.x+m.w-5),y:clamp(p.y,m.y+4,m.y+m.h-13)};}),markers=actual.map(p=>({...p}));
         if(Math.abs(markers[0].x-markers[1].x)<6&&Math.abs(markers[0].y-markers[1].y)<6){
           const middle=clamp((markers[0].x+markers[1].x)*.5,m.x+7,m.x+m.w-8);markers[0].x=middle-3;markers[1].x=middle+3;
           for(let i=0;i<2;i++)mapLine(actual[i],markers[i],i?coral:cyan);
         }
-        for(let i=0;i<2;i++)ghost(Math.round(markers[i].x),Math.round(markers[i].y),i);
+        for(const u of pickups)if(!u.respawn){const q=pickupPoint(u),p=mapPoint(q.x,q.y);rect(lround(p.x)-1,lround(p.y)-1,2,2,boostColor);}
+        for(let i=0;i<2;i++)ghost(lround(markers[i].x),lround(markers[i].y),i);
         outlinedText('P1',m.x+5,m.y+m.h-7,cyan);outlinedText('P2',m.x+22,m.y+m.h-7,coral);rect(m.x+(local?21:4),m.y+m.h-2,9,3,navy);rect(m.x+(local?22:5),m.y+m.h-1,7,1,cream);
       }
       if(phase===0){panel(49,57);center('POCKET',56,cream,2);center('RALLY',69,coral,2);center('CHOOSE A RACE',94,cream);}
       else if(paused){panel(61,31);center('PAUSED',73,cream,2);}
       else if(phase===1){panel(58,41);center(String(Math.max(1,Math.ceil(countdown))),65,cream,4);center('GET READY',88,cyan);}
-      else if(phase===3){panel(48,69);center(winner===2?'PHOTO FINISH':winner===local?'YOU WIN!':'P'+(winner+1)+' WINS!',57,winner===local?cyan:coral);center('NICE RACING',75,cream);center('PLAY AGAIN',99,cream);
-
-      }
+      else if(phase===3){panel(48,69);center(winner===2?'PHOTO FINISH':winner===local?'YOU WIN!':'P'+(winner+1)+' WINS!',57,winner===local?cyan:coral);center('NICE RACING',75,cream);center('PLAY AGAIN',99,cream);}
       const data=images[local].data;for(let i=0;i<pixels.length;i++){const c=pixels[i],p=i*4;data[p]=(c>>11)*255/31;data[p+1]=((c>>5)&63)*255/63;data[p+2]=(c&31)*255/31;data[p+3]=255;}
       contexts[local].putImageData(images[local],0,0);
     }
-    modes.forEach(b=>b.addEventListener('click',()=>{mode=b.dataset.mode;reset();pauseButton.disabled=false;pauseButton.textContent='Pause';modes.forEach(m=>m.setAttribute('aria-pressed',String(m===b)));say(mode==='demo'?'Watching a three-lap race.':mode==='solo'?'You guide blue. Hold left / right to steer.':'Blue: A/D + W turbo · Coral: ←/→ + ↑ turbo.');}));
+    modes.forEach(b=>b.addEventListener('click',()=>{mode=b.dataset.mode;reset();pauseButton.disabled=false;pauseButton.textContent='Pause';modes.forEach(m=>m.setAttribute('aria-pressed',String(m===b)));say(mode==='demo'?'Watching two bots race three laps.':mode==='solo'?'You guide blue against a coral bot. Drag across the screen to steer; touch the top strip for turbo.':'Drag across each screen to steer, top strip for turbo · Blue: A/D + W · Coral: ←/→ + ↑.');}));
     pauseButton.addEventListener('click',()=>{paused=!paused;steer.fill(0);pauseButton.textContent=paused?'Resume':'Pause';say(paused?'Race paused.':'Race resumed.');});
+    // Firmware touch mapping on a 240-wide panel: 8px centre dead zone, then proportional to ±100 (steerFromTouch in main.cpp).
+    const steerFromTouch=x=>{const offset=x-120;return Math.abs(offset)<8?0:Math.trunc(clamp((offset-(offset>0?8:-8))*100/96,-100,100));};
     canvases.forEach((canvas,i)=>{
-      const move=e=>{const r=canvas.getBoundingClientRect(),x=(e.clientX-r.left)*120/r.width,y=(e.clientY-r.top)*160/r.height;steer[i]=x>=40&&x<80&&y>=138?0:x<60?-1:1;};
-      canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);const r=canvas.getBoundingClientRect(),x=(e.clientX-r.left)*120/r.width,y=(e.clientY-r.top)*160/r.height;if(x>=40&&x<80&&y>=138)turbo(i);move(e);});
-      canvas.addEventListener('pointermove',e=>{if(canvas.hasPointerCapture(e.pointerId))move(e);});
-      for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>steer[i]=0);
+      // One finger steers anywhere; pressing or sliding into the top strip fires turbo once per entry.
+      const touch=e=>{const r=canvas.getBoundingClientRect(),racing=phase===1||phase===2,zone=racing&&(e.clientY-r.top)*H/r.height<TURBO_ZONE;if(zone&&!inZone[i])turbo(i);inZone[i]=zone;steer[i]=racing?steerFromTouch(Math.floor((e.clientX-r.left)*240/r.width))/100:0;};
+      canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);touch(e);});
+      canvas.addEventListener('pointermove',e=>{if(canvas.hasPointerCapture(e.pointerId))touch(e);});
+      for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>{steer[i]=0;inZone[i]=false;});
     });
     root.querySelectorAll('[data-steer]').forEach(b=>{
       const [i,d]=b.dataset.steer.split(',').map(Number);
@@ -191,7 +233,7 @@
     const keyMap={a:[0,-1],d:[0,1],ArrowLeft:[1,-1],ArrowRight:[1,1]};
     root.addEventListener('keydown',e=>{if(!e.repeat&&(e.key==='w'||e.key==='W'||e.key==='ArrowUp')){e.preventDefault();turbo(e.key==='ArrowUp'?1:0);}const k=keyMap[e.key];if(k){e.preventDefault();steer[k[0]]=k[1];}});
     root.addEventListener('keyup',e=>{const k=keyMap[e.key];if(k){e.preventDefault();steer[k[0]]=0;}});
-    window.addEventListener('blur',()=>steer.fill(0));
+    window.addEventListener('blur',()=>{steer.fill(0);inZone.fill(false);});
     document.addEventListener('visibilitychange',()=>{steer.fill(0);if(document.hidden&&phase>0&&phase<3){paused=true;pauseButton.textContent='Resume';say('Race paused.');}});
     let previous=0,accumulator=0,renderAt=0;
     function frame(now){

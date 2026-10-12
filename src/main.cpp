@@ -10,6 +10,29 @@ rally::Game game;
 rally::Renderer renderer;
 rally::Link rallyLink;
 rally::View sharedView;
+
+// Onboard RGB LED (CYD-style boards: GPIO 4/16/17, lit when the pin is driven low).
+#ifndef RALLY_LED_R
+#define RALLY_LED_R 4
+#endif
+#ifndef RALLY_LED_G
+#define RALLY_LED_G 16
+#endif
+#ifndef RALLY_LED_B
+#define RALLY_LED_B 17
+#endif
+#ifndef RALLY_LED_ACTIVE_LOW
+#define RALLY_LED_ACTIVE_LOW 1
+#endif
+void led(bool r,bool g,bool b){
+  // Plain digital drive: fully on is the LED's maximum brightness.
+  digitalWrite(RALLY_LED_R,r!=RALLY_LED_ACTIVE_LOW);digitalWrite(RALLY_LED_G,g!=RALLY_LED_ACTIVE_LOW);digitalWrite(RALLY_LED_B,b!=RALLY_LED_ACTIVE_LOW);
+}
+void ledBegin(){
+  pinMode(RALLY_LED_R,OUTPUT);pinMode(RALLY_LED_G,OUTPUT);pinMode(RALLY_LED_B,OUTPUT);
+  // Red, green, blue self-test so the wiring can be checked at a glance.
+  led(1,0,0);delay(250);led(0,1,0);delay(250);led(0,0,1);delay(250);led(0,0,0);
+}
 portMUX_TYPE viewMux=portMUX_INITIALIZER_UNLOCKED;
 bool solo=false,radioOk=false,touchOk=false;
 int8_t steering=0;
@@ -44,6 +67,12 @@ void publish(){
 
 void menu(){solo=false;screen=0;steering=0;rallyLink.choose(rally::Link::NONE);game=rally::Game();}
 
+// Touch-to-steering: finger X across the whole screen, with a small centre dead zone.
+int8_t steerFromTouch(int x){
+  int offset=x-120;if(std::abs(offset)<8)return 0;
+  return int8_t(rally::clamp((offset-(offset>0?8:-8))*100.f/96.f,-100,100));
+}
+
 void turboTap(){int local=rallyLink.role==rally::Link::GUEST?1:0;if(screen==4&&game.state.phase==rally::RACING&&game.state.cars[local].cooldown==0)rallyLink.localTurbo++;}
 
 void onTap(int x,int y){
@@ -54,12 +83,18 @@ void onTap(int x,int y){
   }else if(screen==1||screen==2)menu();
   else if(screen==3)rallyLink.localReady=true;
   else if(screen==4&&game.state.phase==rally::FINISHED){if(solo)game.reset(esp_random());else rallyLink.localReady=true;}
-  else if(screen==4&&x>=40&&x<80&&y>=138)turboTap();
+}
+
+// Green: linked to the other board. Blinking red: searching or link lost. Off: menu or practice.
+void updateLed(uint32_t now){
+  if(rallyLink.role==rally::Link::NONE||solo||screen==5)led(0,0,0);
+  else if(rallyLink.fresh())led(0,1,0);
+  else led((now/250)%2==0,0,0);
 }
 
 void setup(){
   Serial.begin(115200);pinMode(0,INPUT_PULLUP);
-  display.begin();touchOk=touch.begin();
+  display.begin();touchOk=touch.begin();ledBegin();
 #ifdef RALLY_DIAGNOSTIC
   display.fillScreen(TFT_BLACK);display.setTextColor(TFT_WHITE);display.setTextSize(2);
   display.setCursor(8,8);display.print("POCKET RALLY\nTouch test");
@@ -70,13 +105,13 @@ void setup(){
   if(!touchOk||!radioOk)screen=5;
   publish();
   if(xTaskCreatePinnedToCore(drawTask,"rally-render",6144,nullptr,1,nullptr,0)!=pdPASS){Serial.println("Renderer task allocation failed");display.fillScreen(TFT_RED);return;}
-  Serial.printf("POCKET RALLY 0.5 | %s | touch=%d radio=%d | free heap=%u\n",WiFi.macAddress().c_str(),touchOk,radioOk,ESP.getFreeHeap());
+  Serial.printf("POCKET RALLY 0.6 | %s | touch=%d radio=%d | free heap=%u\n",WiFi.macAddress().c_str(),touchOk,radioOk,ESP.getFreeHeap());
   Serial.println("Hold BOOT for 1 second to return to menu. Serial h=host j=join p=practice r=ready m=menu.");
 #endif
 }
 
 void loop(){
-  static uint32_t inputAt=0,simulationAt=micros(),bootAt=0;static bool wasTouched=false,bootHandled=false;
+  static uint32_t inputAt=0,simulationAt=micros(),bootAt=0;static bool wasTouched=false,wasTurbo=false,bootHandled=false;
   uint32_t now=millis();int x=0,y=0;
 #ifdef RALLY_DIAGNOSTIC
   if(touch.read(x,y)){display.fillCircle(x,y,3,TFT_YELLOW);Serial.printf("touch %d,%d\n",x,y);}
@@ -86,10 +121,11 @@ void loop(){
   if(now-inputAt>=8){
     inputAt=now;bool pressed=touch.read(x,y);
     if(pressed&&!wasTouched)onTap(x/2,y/2);
-    // One finger: tap turbo, then slide to either steering zone while it runs.
-    bool turboZone=x>=80&&x<160&&y>=276;
-    steering=pressed&&screen==4&&game.state.phase!=rally::FINISHED&&!turboZone?(x<120?-1:1):0;
-    wasTouched=pressed;
+    // One finger steers anywhere; touching or sliding into the top strip fires turbo once.
+    bool racing=pressed&&screen==4&&game.state.phase!=rally::FINISHED,turbo=racing&&y<rally::TURBO_ZONE*2;
+    if(turbo&&!wasTurbo)turboTap();
+    steering=racing?steerFromTouch(x):0;
+    wasTouched=pressed;wasTurbo=turbo;
   }
   if(digitalRead(0)==LOW){if(!bootAt)bootAt=now;if(!bootHandled&&now-bootAt>1000){menu();bootHandled=true;}}
   else {bootAt=0;bootHandled=false;}
@@ -106,15 +142,16 @@ void loop(){
   while(uint32_t(us-simulationAt)>=16667){
     simulationAt+=16667;
     if(screen==4&&(solo||(rallyLink.fresh()&&!rallyLink.hostPaused))){
-      if(solo){if(game.botTurbo(1))rallyLink.remoteTurbo++;game.step(1.f/60,steering,game.bot(1),rallyLink.localTurbo,rallyLink.remoteTurbo);}
-      else if(rallyLink.role==rally::Link::HOST)game.step(1.f/60,steering,uint32_t(now-rallyLink.lastRx)<150?rallyLink.remoteSteer:0,rallyLink.localTurbo,rallyLink.remoteTurbo);
+      const float local=steering/100.f,remote=rallyLink.remoteSteer/100.f;
+      if(solo){if(game.botTurbo(1))rallyLink.remoteTurbo++;game.step(1.f/60,local,game.bot(1),rallyLink.localTurbo,rallyLink.remoteTurbo);}
+      else if(rallyLink.role==rally::Link::HOST)game.step(1.f/60,local,uint32_t(now-rallyLink.lastRx)<150?remote:0,rallyLink.localTurbo,rallyLink.remoteTurbo);
       else {
         // Predict between authoritative snapshots for immediate steering feedback.
-        auto phase=game.state.phase;game.step(1.f/60,rallyLink.remoteSteer,steering,rallyLink.remoteTurbo,rallyLink.localTurbo);
+        auto phase=game.state.phase;game.step(1.f/60,remote,local,rallyLink.remoteTurbo,rallyLink.localTurbo);
         if(phase!=rally::FINISHED&&game.state.phase==rally::FINISHED){game.state.phase=rally::RACING;game.state.winner=255;}
       }
     }
   }
-  publish();delay(1);
+  updateLed(now);publish();delay(1);
 #endif
 }

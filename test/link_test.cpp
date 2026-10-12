@@ -18,10 +18,12 @@ int main(){
   p.sequence=101;p.race.raceId=500;p.turboRequest=2; // Simulate losing this transmission.
   p.sequence=102;receive(p);assert(host.remoteTurbo==2); // The next repeated input arrives.
   game.step(1.f/60,0,0,0,host.remoteTurbo);assert(game.state.cars[1].turboRequest==2&&game.state.cars[1].boost<1.02f);
-  p.sequence=103;p.version=2;p.turboRequest=7;receive(p);assert(host.remoteTurbo==2);
+  p.sequence=103;p.steer=75;receive(p);assert(host.remoteSteer==75); // Proportional steering.
+  p.sequence=104;p.steer=101;receive(p);assert(host.remoteSteer==75); // Out-of-range steering is rejected.
+  p.steer=0;p.sequence=105;p.version=3;p.turboRequest=7;receive(p);assert(host.remoteTurbo==2);
   fakeNow+=601;assert(!host.fresh());
   game.reset(501);host.pump(game,0);assert(host.localTurbo==0&&host.remoteTurbo==0);
-  p.version=PROTOCOL;p.sequence=104;p.race.raceId=500;receive(p);assert(host.remoteTurbo==0);
+  p.version=PROTOCOL;p.sequence=106;p.race.raceId=500;receive(p);assert(host.remoteTurbo==0);
   // Rebooted guest resumes at the acknowledged counter, without phantom turbo.
   game.state.cars[1].turboRequest=12;p.kind=JOIN;p.boot=401;receive(p);assert(host.remoteTurbo==12);
   host.choose(Link::GUEST);p=Packet{};p.kind=HELLO;p.boot=900;p.session=800;receive(p);
@@ -38,6 +40,6 @@ int main(){
   p.sequence=4;p.race.cars[0].covered=192;receive(p);assert(game.state.cars[0].covered!=192); // Reject inconsistent coverage data.
   authoritative.reset(601);p.sequence=5;p.race=authoritative.state;receive(p);assert(host.localTurbo==0&&host.remoteTurbo==0);
   assert(game.state.cars[0].covered==0&&game.state.cars[1].covered==0);
-  std::cout<<"Link v3: turbo input handling, old protocol rejection, timeout, race reset, reboot, coverage snapshots and invalid-coverage rejection passed. Packet="<<sizeof(Packet)<<" bytes.\n";
+  std::cout<<"Link v"<<int(PROTOCOL)<<": proportional steering, turbo input handling, old protocol rejection, timeout, race reset, reboot, coverage snapshots and invalid-coverage rejection passed. Packet="<<sizeof(Packet)<<" bytes.\n";
   delete rxQueue;rxQueue=nullptr;
 }
