@@ -2,6 +2,13 @@
 
 An abstract top-down pixel racer for **two Guition JC2432W328C capacitive-touch ESP32 displays**. One winding circuit, two geometric gliders, three laps. Both devices share the same race, with a separate rotating camera following each player. The same firmware runs on both.
 
+<p align="center">
+  <img src="renders/player-1.png" width="240" alt="Player 1's screen: blue glider on turbo over a light-blue covered stretch of the sand ribbon, with the HUD, turbo strip and minimap on top">
+  &nbsp;
+  <img src="renders/player-2.png" width="240" alt="Player 2's screen at the same instant: red glider on a pink covered stretch, turbo ready">
+</p>
+<p align="center"><sub>The same moment on both boards, rendered by the firmware's own renderer (not photographs).</sub></p>
+
 ## Play
 
 1. Power both boards. Choose **HOST RACE** on one and **JOIN RACE** on the other.
